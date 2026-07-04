@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>JANスキャナー</title>
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#2c3e50">
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+    background: #f2f4f6; color: #222; padding-bottom: 40px;
+  }
+  header {
+    background: #2c3e50; color: #fff; padding: 14px 16px; font-size: 18px; font-weight: bold;
+    position: sticky; top: 0; z-index: 10; display: flex; justify-content: space-between; align-items: center;
+  }
+  header .sub { font-size: 12px; font-weight: normal; opacity: 0.85; }
+  main { padding: 12px; max-width: 720px; margin: 0 auto; }
+  section.card {
+    background: #fff; border-radius: 10px; padding: 16px; margin-bottom: 14px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  h2 { font-size: 15px; margin: 0 0 10px; color: #2c3e50; }
+  button {
+    font-size: 15px; padding: 12px 16px; border-radius: 8px; border: none;
+    background: #2c7be5; color: #fff; cursor: pointer; touch-action: manipulation;
+  }
+  button.secondary { background: #6c757d; }
+  button.danger { background: #d64545; }
+  button.small { padding: 6px 10px; font-size: 13px; }
+  button:disabled { background: #b7c0c9; cursor: not-allowed; }
+  input[type=text], input[type=number] {
+    font-size: 16px; padding: 10px; border: 1px solid #ccc; border-radius: 8px; width: 100%;
+  }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .row > * { flex: 1; }
+  #reader { width: 100%; border-radius: 8px; overflow: hidden; margin-top: 10px; }
+  #matchBox { margin-top: 12px; padding: 12px; border-radius: 8px; }
+  #matchBox.found { background: #e6f7ec; border: 1px solid #2fa860; }
+  #matchBox.notfound { background: #fdeaea; border: 1px solid #d64545; }
+  #matchBox .name { font-size: 17px; font-weight: bold; margin-bottom: 4px; }
+  #matchBox .meta { font-size: 13px; color: #555; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { border-bottom: 1px solid #eee; padding: 8px 4px; text-align: left; }
+  th { color: #888; font-weight: normal; font-size: 12px; }
+  .hidden { display: none !important; }
+  .muted { color: #888; font-size: 12px; }
+  .toast {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    background: #222; color: #fff; padding: 10px 18px; border-radius: 20px; font-size: 14px;
+    opacity: 0; transition: opacity 0.3s; z-index: 100; pointer-events: none; max-width: 90%; text-align: center;
+  }
+  .toast.show { opacity: 0.95; }
+  .badge { display: inline-block; background: #eee; border-radius: 4px; padding: 1px 6px; font-size: 11px; color: #555; }
+</style>
+</head>
+<body>
+
+<header>
+  <span>JANスキャナー</span>
+  <span class="sub" id="headerStatus">未読込</span>
+</header>
+
+<main>
+
+  <section class="card" id="setupCard">
+    <h2>① 商品マスタの読み込み</h2>
+    <p class="muted">商品マスタのExcelファイル（JAN・商品名・価格などが入った一覧表）を選択してください。端末内に保存され、次回以降は自動で読み込まれます。</p>
+    <input type="file" id="masterFile" accept=".xlsx,.xls">
+    <p class="muted" id="setupStatus"></p>
+  </section>
+
+  <section class="card hidden" id="scanCard">
+    <h2>② JANスキャン</h2>
+    <div class="row">
+      <button id="startScanBtn">カメラでスキャン開始</button>
+      <button id="stopScanBtn" class="secondary hidden">停止</button>
+    </div>
+    <div id="reader" class="hidden"></div>
+
+    <div style="margin-top:14px;">
+      <p class="muted">読み取れない場合はJANを直接入力：</p>
+      <div class="row">
+        <input type="text" id="manualJan" inputmode="numeric" placeholder="JANコードを入力">
+        <button id="manualSearchBtn" style="flex:0 0 auto;">検索</button>
+      </div>
+    </div>
+
+    <div id="matchBox" class="hidden"></div>
+  </section>
+
+  <section class="card hidden" id="listCard">
+    <h2>③ 収集リスト（<span id="listCount">0</span>件）</h2>
+    <p class="muted">スキャンした商品の一覧です。「コピー」で夢ぷりんと・Excelに貼り付けられる形式にコピーします。</p>
+    <div class="row">
+      <button id="copyListBtn" class="secondary">タブ区切りでコピー</button>
+      <button id="clearListBtn" class="danger">リストを空にする</button>
+    </div>
+    <div style="overflow-x:auto; margin-top:10px;">
+      <table id="listTable">
+        <thead><tr><th></th><th>JAN</th><th>商品名</th><th>規格</th><th>卸</th><th>ロケ</th><th>区分</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card" id="appTemplateSetupCard">
+    <h2>④ 申請用テンプレートの読み込み（任意）</h2>
+    <p class="muted">商品登録・変更の申請行を蓄積しているExcelファイルを選択してください。</p>
+    <input type="file" id="appTemplateFile" accept=".xlsx,.xls">
+    <div id="appSheetPicker" class="hidden" style="margin-top:10px;">
+      <p class="muted">どのシートが申請の一覧表ですか？</p>
+      <select id="appSheetSelect"></select>
+      <button id="appSheetConfirmBtn" class="small" style="margin-left:6px;">これに決定</button>
+    </div>
+    <p class="muted" id="appTemplateStatus"></p>
+  </section>
+
+  <section class="card hidden" id="appFormCard">
+    <h2>⑤ 申請行の作成</h2>
+    <p class="muted" id="appFormTarget">対象商品：スキャンまたは検索で商品を選択してください</p>
+    <div class="row">
+      <div>
+        <label class="muted">区分</label>
+        <select id="appKubun" style="width:100%;">
+          <option value="値上">値上</option>
+          <option value="登録">登録</option>
+          <option value="変更">変更</option>
+          <option value="カット">カット</option>
+          <option value="B登録">B登録</option>
+          <option value="ロケ">ロケ</option>
+        </select>
+      </div>
+    </div>
+    <div class="row" style="margin-top:8px;">
+      <div>
+        <label class="muted">実行日付</label>
+        <input type="date" id="appJikkoDate">
+      </div>
+      <div>
+        <label class="muted">入力日付</label>
+        <input type="date" id="appNyuryokuDate">
+      </div>
+    </div>
+    <div class="row" style="margin-top:8px;">
+      <div>
+        <label class="muted">新・小売</label>
+        <input type="number" id="appKouri">
+      </div>
+      <div>
+        <label class="muted">新・仕切</label>
+        <input type="number" id="appShikiri">
+      </div>
+    </div>
+    <div style="margin-top:8px;">
+      <label class="muted">備考</label>
+      <input type="text" id="appBiko">
+    </div>
+    <div style="margin-top:10px;">
+      <button id="addAppBtn">申請リストに追加</button>
+    </div>
+  </section>
+
+  <section class="card hidden" id="appListCard">
+    <h2>⑥ 申請リスト（<span id="appListCount">0</span>件）</h2>
+    <p class="muted">「コピー」で、Excelテンプレートの表の一番下の空き行に貼り付けてください（見出し行は含みません）。商品コードが無い新規商品は、メーカー・商品名等も別途手入力が必要です。</p>
+    <div class="row">
+      <button id="copyAppBtn" class="secondary">タブ区切りでコピー</button>
+      <button id="clearAppBtn" class="danger">申請リストを空にする</button>
+    </div>
+    <div style="overflow-x:auto; margin-top:10px;">
+      <table id="appTable">
+        <thead><tr><th></th><th>区分</th><th>商品名</th><th>商品コード</th><th>実行日付</th><th>小売</th><th>仕切</th><th>備考</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card" id="masterInfoCard">
+    <h2>マスタ情報</h2>
+    <p class="muted" id="masterInfo">未読込</p>
+    <button id="reloadMasterBtn" class="secondary small hidden">マスタデータを再読み込み</button>
+  </section>
+
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script src="./lib/xlsx.full.min.js"></script>
+<script src="./lib/html5-qrcode.min.js"></script>
+<script src="./app.js"></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').catch(err => console.warn('SW registration failed', err));
+    });
+  }
+</script>
+</body>
+</html>
