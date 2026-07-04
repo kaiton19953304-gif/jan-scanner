@@ -378,22 +378,31 @@ $('clearListBtn').addEventListener('click', () => {
   renderList();
 });
 
+// プライスカード用に出力する列（この順番で固定）
+const PRICE_CARD_COLUMNS = [
+  { label: 'JANコード', get: (r) => r['JAN'] ?? '' },
+  { label: 'メーカー', get: (r) => r['メーカー'] ?? '' },
+  { label: '商品名', get: (r) => r['商品名'] ?? '' },
+  { label: '規格', get: (r) => r['規格'] ?? '' },
+  { label: 'ケース', get: (r) => r['ケース'] ?? '' },
+  { label: 'ボール', get: (r) => r['ボール'] ?? '' },
+  { label: '卸', get: (r) => r['卸'] ?? r['卸（ランク1）'] ?? '' },
+  { label: 'ロケ', get: (r) => r['ロケ'] ?? '' },
+  { label: '出荷', get: (r) => r['出荷'] ?? '' },
+  { label: '切替日付', get: (r) => r['切替日付'] ?? '' },
+];
+
+function buildPriceCardRows() {
+  return state.collected.map(c => PRICE_CARD_COLUMNS.map(col => col.get(c.row)));
+}
+
 $('copyListBtn').addEventListener('click', async () => {
   if (!state.collected.length) { toast('リストが空です'); return; }
-  const bySheet = new Map();
-  for (const c of state.collected) {
-    if (!bySheet.has(c.sheet)) bySheet.set(c.sheet, []);
-    bySheet.get(c.sheet).push(c.row);
-  }
-  let text = '';
-  for (const [sheetName, rows] of bySheet) {
-    const header = state.sheets.find(s => s.name === sheetName)?.header || Object.keys(rows[0]);
-    text += `=== ${sheetName} ===\n`;
-    text += header.join('\t') + '\n';
-    for (const row of rows) {
-      text += header.map(h => row[h] ?? '').join('\t') + '\n';
-    }
-    text += '\n';
+  const header = PRICE_CARD_COLUMNS.map(c => c.label);
+  const rows = buildPriceCardRows();
+  let text = header.join('\t') + '\n';
+  for (const row of rows) {
+    text += row.join('\t') + '\n';
   }
   try {
     await navigator.clipboard.writeText(text);
@@ -408,6 +417,19 @@ $('copyListBtn').addEventListener('click', async () => {
     document.body.removeChild(ta);
     toast('コピーしました');
   }
+});
+
+$('saveExcelBtn').addEventListener('click', () => {
+  if (!state.collected.length) { toast('リストが空です'); return; }
+  const header = PRICE_CARD_COLUMNS.map(c => c.label);
+  const rows = buildPriceCardRows();
+  const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'プライスカード');
+  const d = new Date();
+  const stamp = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}_${String(d.getHours()).padStart(2,'0')}${String(d.getMinutes()).padStart(2,'0')}`;
+  XLSX.writeFile(wb, `プライスカード_${stamp}.xlsx`);
+  toast('Excelファイルを保存しました');
 });
 
 /* ---------- 申請テンプレート ---------- */
