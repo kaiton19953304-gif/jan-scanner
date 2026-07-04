@@ -85,8 +85,16 @@
     <div class="row">
       <button id="startScanBtn">カメラでスキャン開始</button>
       <button id="stopScanBtn" class="secondary hidden">停止</button>
+      <button id="torchBtn" class="secondary hidden">ライトを点ける</button>
     </div>
     <div id="reader" class="hidden"></div>
+    <p class="muted">読み取りにくい場合は、バーコードに近づきすぎず、画面の枠いっぱいに収まる距離で試してください。</p>
+
+    <div style="margin-top:14px;">
+      <p class="muted">商品名・メーカーの一部でも検索できます：</p>
+      <input type="text" id="keywordSearch" placeholder="例：味の素　赤袋">
+      <div id="keywordResults" style="margin-top:8px; display:flex; flex-direction:column; gap:6px;"></div>
+    </div>
 
     <div style="margin-top:14px;">
       <p class="muted">読み取れない場合はJANを直接入力：</p>

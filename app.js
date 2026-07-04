@@ -228,16 +228,25 @@ $('startScanBtn').addEventListener('click', async () => {
       Html5QrcodeSupportedFormats.CODE_128,
       Html5QrcodeSupportedFormats.ITF, // 外箱・段ボールの集合包装コード
     ],
+    // 対応端末ではブラウザ標準のバーコード検出エンジンを使い、精度と速度を上げる
+    experimentalFeatures: { useBarCodeDetectorIfSupported: true },
     verbose: false,
   });
   try {
     await state.html5QrCode.start(
       { facingMode: 'environment' },
-      { fps: 10, qrbox: { width: 220, height: 110 } },
+      {
+        fps: 15,
+        // 1次元バーコードは横長なので、箱に対して横幅を広めに取る
+        qrbox: { width: 280, height: 120 },
+        disableFlip: true,
+        aspectRatio: 4 / 3,
+      },
       onScanSuccess,
       onScanFailure
     );
     state.scanning = true;
+    setupTorchToggle();
   } catch (err) {
     console.error(err);
     toast('カメラを起動できませんでした: ' + err);
@@ -257,6 +266,29 @@ async function stopScanning() {
   $('reader').classList.add('hidden');
   $('startScanBtn').classList.remove('hidden');
   $('stopScanBtn').classList.add('hidden');
+  $('torchBtn').classList.add('hidden');
+}
+
+// ライト(トーチ)に対応した端末だけボタンを表示する
+function setupTorchToggle() {
+  const btn = $('torchBtn');
+  btn.classList.add('hidden');
+  btn.dataset.on = '0';
+  try {
+    const track = state.html5QrCode?.getRunningTrackCameraCapabilities?.();
+    const caps = track?.torchFeature?.() ?? null;
+    if (caps && caps.isSupported && caps.isSupported()) {
+      btn.classList.remove('hidden');
+      btn.onclick = async () => {
+        const turnOn = btn.dataset.on !== '1';
+        try {
+          await caps.apply(turnOn);
+          btn.dataset.on = turnOn ? '1' : '0';
+          btn.textContent = turnOn ? 'ライトを消す' : 'ライトを点ける';
+        } catch (e) { toast('ライトを切り替えられませんでした'); }
+      };
+    }
+  } catch (e) { /* 未対応端末は無視 */ }
 }
 
 $('manualSearchBtn').addEventListener('click', () => {
@@ -266,6 +298,58 @@ $('manualSearchBtn').addEventListener('click', () => {
 $('manualJan').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') $('manualSearchBtn').click();
 });
+
+/* ---------- 商品名・メーカーでのキーワード検索 ---------- */
+
+let keywordSearchTimer = null;
+$('keywordSearch').addEventListener('input', () => {
+  clearTimeout(keywordSearchTimer);
+  keywordSearchTimer = setTimeout(() => runKeywordSearch($('keywordSearch').value), 250);
+});
+
+function runKeywordSearch(query) {
+  const resultsEl = $('keywordResults');
+  const q = query.trim().toLowerCase();
+  if (q.length < 2) {
+    resultsEl.innerHTML = '';
+    return;
+  }
+  const hits = [];
+  outer:
+  for (const sheet of state.sheets) {
+    for (const row of sheet.rows) {
+      const name = String(row['商品名'] || '').toLowerCase();
+      const maker = String(row['メーカー'] || '').toLowerCase();
+      if (name.includes(q) || maker.includes(q)) {
+        hits.push({ sheet: sheet.name, row });
+        if (hits.length >= 30) break outer;
+      }
+    }
+  }
+  if (!hits.length) {
+    resultsEl.innerHTML = `<p class="muted">該当する商品が見つかりません</p>`;
+    return;
+  }
+  resultsEl.innerHTML = '';
+  hits.forEach((hit) => {
+    const r = hit.row;
+    const btn = document.createElement('button');
+    btn.className = 'secondary';
+    btn.style.textAlign = 'left';
+    btn.textContent = `${r['商品名'] || ''}（${r['メーカー'] || ''} / ${r['規格'] || '-'} / 卸${r['卸'] ?? r['卸（ランク1）'] ?? '-'}）`;
+    btn.addEventListener('click', () => {
+      renderHitBox(hit, r['JAN']);
+      $('matchBox').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    resultsEl.appendChild(btn);
+  });
+  if (hits.length >= 30) {
+    const note = document.createElement('p');
+    note.className = 'muted';
+    note.textContent = '候補が多いため上位30件のみ表示しています。もう少し詳しく入力してください。';
+    resultsEl.appendChild(note);
+  }
+}
 
 function renderHitBox(hit, code) {
   const box = $('matchBox');
