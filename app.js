@@ -33,6 +33,7 @@ async function idbSet(key, value) {
 const state = {
   sheets: [],       // [{ name, header:[...], rows:[{...}] }]
   janMap: new Map(), // normalizedJan -> [{ sheet, row }]
+  itfMap: new Map(), // normalizedITF(外箱コード) -> [{ sheet, row }]
   collected: [],     // [{ sheet, row }]
   applications: [],  // [{ 区分, 実行日付, 入力日付, 商品コード, 小売, 仕切, 備考, _display:{商品名, JAN} }]
   html5QrCode: null,
@@ -60,12 +61,20 @@ function normalizeJan(raw) {
 
 function buildJanMap() {
   state.janMap.clear();
+  state.itfMap.clear();
   for (const sheet of state.sheets) {
     for (const row of sheet.rows) {
       const jan = normalizeJan(row['JAN']);
-      if (!jan) continue;
-      if (!state.janMap.has(jan)) state.janMap.set(jan, []);
-      state.janMap.get(jan).push({ sheet: sheet.name, row });
+      if (jan) {
+        if (!state.janMap.has(jan)) state.janMap.set(jan, []);
+        state.janMap.get(jan).push({ sheet: sheet.name, row });
+      }
+      // ITF(外箱・段ボールの集合包装コード)からも同じ商品を引けるようにする
+      const itf = normalizeJan(row['ITF']);
+      if (itf) {
+        if (!state.itfMap.has(itf)) state.itfMap.set(itf, []);
+        state.itfMap.get(itf).push({ sheet: sheet.name, row });
+      }
     }
   }
 }
@@ -88,7 +97,7 @@ function dedupeCandidates(list) {
   return out;
 }
 
-// 同一JANに複数商品が紐づく場合があるため配列で返す
+// 同一JAN/ITFに複数商品が紐づく場合があるため配列で返す
 function lookupCandidates(rawCode) {
   const jan = normalizeJan(rawCode);
   if (!jan) return [];
@@ -97,6 +106,10 @@ function lookupCandidates(rawCode) {
     // UPC-A(12桁) <-> EAN-13(先頭0付き13桁) の揺れを吸収
     if (jan.length === 12) list = state.janMap.get('0' + jan);
     else if (jan.length === 13 && jan.startsWith('0')) list = state.janMap.get(jan.slice(1));
+  }
+  if (!list) {
+    // JANで見つからない場合は外箱のITFコードとして検索
+    list = state.itfMap.get(jan);
   }
   return list ? dedupeCandidates(list) : [];
 }
@@ -213,13 +226,14 @@ $('startScanBtn').addEventListener('click', async () => {
       Html5QrcodeSupportedFormats.UPC_A,
       Html5QrcodeSupportedFormats.UPC_E,
       Html5QrcodeSupportedFormats.CODE_128,
+      Html5QrcodeSupportedFormats.ITF, // 外箱・段ボールの集合包装コード
     ],
     verbose: false,
   });
   try {
     await state.html5QrCode.start(
       { facingMode: 'environment' },
-      { fps: 10, qrbox: { width: 280, height: 160 } },
+      { fps: 10, qrbox: { width: 220, height: 110 } },
       onScanSuccess,
       onScanFailure
     );
@@ -257,9 +271,11 @@ function renderHitBox(hit, code) {
   const box = $('matchBox');
   box.className = 'found';
   const r = hit.row;
+  const isItf = normalizeJan(code) !== normalizeJan(r['JAN']);
+  const codeLabel = isItf ? `ITF(外箱): ${escapeHtml(String(code))} ／ JAN: ${escapeHtml(String(r['JAN'] ?? '-'))}` : `JAN: ${escapeHtml(String(code))}`;
   box.innerHTML = `
     <div class="name">${escapeHtml(r['商品名'] || '')} <span class="badge">${escapeHtml(hit.sheet)}</span></div>
-    <div class="meta">JAN: ${escapeHtml(String(code))} ／ 規格: ${escapeHtml(r['規格'] || '-')} ／ 卸: ${escapeHtml(String(r['卸'] ?? r['卸（ランク1）'] ?? '-'))} ／ ロケ: ${escapeHtml(r['ロケ'] || '-')}</div>
+    <div class="meta">${codeLabel} ／ 規格: ${escapeHtml(r['規格'] || '-')} ／ 卸: ${escapeHtml(String(r['卸'] ?? r['卸（ランク1）'] ?? '-'))} ／ ロケ: ${escapeHtml(r['ロケ'] || '-')}</div>
     <div style="margin-top:8px; display:flex; gap:8px;">
       <button id="addToListBtn">リストに追加</button>
       <button id="setAppTargetBtn" class="secondary">申請対象にする</button>
@@ -321,8 +337,10 @@ function escapeHtml(s) {
 /* ---------- 収集リスト ---------- */
 
 function addToList(hit, jan) {
-  const normJan = normalizeJan(jan);
-  if (state.collected.some(c => normalizeJan(c.row['JAN']) === normJan)) {
+  // 重複判定は「スキャンしたコード」ではなく商品そのもの(実際のJAN)で行う
+  // ※ITF(外箱コード)経由で追加された場合でもJANが同じなら重複扱いにするため
+  const normJan = normalizeJan(hit.row['JAN']) ?? normalizeJan(jan);
+  if (state.collected.some(c => (normalizeJan(c.row['JAN']) ?? '') === normJan)) {
     toast('すでにリストにあります');
     return;
   }
