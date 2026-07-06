@@ -161,6 +161,8 @@ function renderMasterInfo(meta) {
 function showMainScreens() {
   $('scanCard').classList.remove('hidden');
   $('listCard').classList.remove('hidden');
+  // バーコードリーダーですぐ読み取れるよう、JAN入力欄にフォーカスしておく
+  setTimeout(() => $('manualJan').focus(), 0);
 }
 
 $('masterFile').addEventListener('change', async (e) => {
@@ -291,12 +293,21 @@ function setupTorchToggle() {
   } catch (e) { /* 未対応端末は無視 */ }
 }
 
-$('manualSearchBtn').addEventListener('click', () => {
+// バーコードリーダー(USB/Bluetooth)は入力欄にJANを打ち込んだ後Enterを送るキーボードとして動作する。
+// 毎回手で消さなくても続けてスキャンできるよう、検索後は自動的に欄を空にしてフォーカスを戻す。
+function processManualCode() {
   const v = $('manualJan').value.trim();
-  if (v) handleCode(v);
-});
+  if (!v) return;
+  handleCode(v);
+  $('manualJan').value = '';
+  $('manualJan').focus();
+}
+$('manualSearchBtn').addEventListener('click', processManualCode);
 $('manualJan').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') $('manualSearchBtn').click();
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    processManualCode();
+  }
 });
 
 /* ---------- 商品名・メーカーでのキーワード検索 ---------- */
@@ -365,7 +376,14 @@ function renderHitBox(hit, code) {
       <button id="setAppTargetBtn" class="secondary">申請対象にする</button>
     </div>
   `;
-  $('addToListBtn').addEventListener('click', () => addToList(hit, code));
+  $('addToListBtn').addEventListener('click', () => {
+    addToList(hit, code);
+    // 追加済みかどうか一目で分かるよう、表示と入力欄をクリアして次のスキャンに備える
+    box.classList.add('hidden');
+    box.innerHTML = '';
+    $('manualJan').value = '';
+    $('manualJan').focus();
+  });
   $('setAppTargetBtn').addEventListener('click', () => setAppTarget(hit, code));
 }
 
