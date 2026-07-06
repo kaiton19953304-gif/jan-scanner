@@ -40,6 +40,9 @@ const state = {
   scanning: false,
   lastMatch: null,   // 直近にマッチした商品（申請行作成の対象）
   appTemplate: null, // { fileLabel, sheetName, header:[...] }
+  corrections: [],   // [{ 区分:'JAN'|'ITF', 商品名, メーカー, 品目コード, 旧コード, 新コード, 検出日 }]
+  correctionPendingCode: null, // 訂正申請フロー中に保持する「見つからなかったコード」
+  correctionSelectedHit: null, // 訂正申請フローで検索して選んだ商品
 };
 
 const $ = (id) => document.getElementById(id);
@@ -403,8 +406,10 @@ function handleCode(code) {
     box.className = 'notfound';
     box.innerHTML = `
       <div class="name">マスタに見つかりませんでした</div>
-      <div class="meta">JAN: ${escapeHtml(String(code))}（新規商品の可能性があります）</div>
+      <div class="meta">JAN: ${escapeHtml(String(code))}（新規商品の可能性、またはメーカー都合のコード変更の可能性があります）</div>
+      <div style="margin-top:8px;"><button id="openCorrectionBtn" class="secondary">JAN/ITFコードの訂正申請</button></div>
     `;
+    $('openCorrectionBtn').addEventListener('click', () => startCorrectionFlow(code));
     return;
   }
 
@@ -713,6 +718,190 @@ $('copyAppBtn').addEventListener('click', async () => {
   }
 });
 
+/* ---------- JAN/ITFコード訂正申請 ---------- */
+
+function startCorrectionFlow(code) {
+  state.correctionPendingCode = code;
+  state.correctionSelectedHit = null;
+  // 13桁ならJAN、14桁ならITFの可能性が高いので初期値として推測する
+  const digits = String(code).replace(/[^0-9]/g, '');
+  $('correctionKubun').value = digits.length === 14 ? 'ITF' : 'JAN';
+  $('correctionTargetInfo').textContent = `見つからなかったコード: ${code}`;
+  $('correctionSearch').value = '';
+  $('correctionSearchResults').innerHTML = '';
+  $('correctionConfirm').classList.add('hidden');
+  $('correctionCard').classList.remove('hidden');
+  $('correctionCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  setTimeout(() => $('correctionSearch').focus(), 100);
+}
+
+let correctionSearchTimer = null;
+$('correctionSearch').addEventListener('input', () => {
+  clearTimeout(correctionSearchTimer);
+  correctionSearchTimer = setTimeout(() => runCorrectionSearch($('correctionSearch').value), 250);
+});
+
+function runCorrectionSearch(query) {
+  const resultsEl = $('correctionSearchResults');
+  const q = query.trim().toLowerCase();
+  if (q.length < 2) {
+    resultsEl.innerHTML = '';
+    return;
+  }
+  const hits = [];
+  outer:
+  for (const sheet of state.sheets) {
+    for (const row of sheet.rows) {
+      const name = String(row['商品名'] || '').toLowerCase();
+      const maker = String(row['メーカー'] || '').toLowerCase();
+      if (name.includes(q) || maker.includes(q)) {
+        hits.push({ sheet: sheet.name, row });
+        if (hits.length >= 30) break outer;
+      }
+    }
+  }
+  resultsEl.innerHTML = '';
+  if (!hits.length) {
+    resultsEl.innerHTML = `<p class="muted">該当する商品が見つかりません</p>`;
+    return;
+  }
+  hits.forEach((hit) => {
+    const r = hit.row;
+    const btn = document.createElement('button');
+    btn.className = 'secondary';
+    btn.style.textAlign = 'left';
+    btn.textContent = `${r['商品名'] || ''}（${r['メーカー'] || ''} / 品目コード:${r['品目ｺｰﾄﾞ'] || '-'}）`;
+    btn.addEventListener('click', () => selectCorrectionCandidate(hit));
+    resultsEl.appendChild(btn);
+  });
+}
+
+function selectCorrectionCandidate(hit) {
+  state.correctionSelectedHit = hit;
+  const r = hit.row;
+  $('correctionConfirmName').textContent = `${r['商品名'] || ''}（${r['メーカー'] || ''} / 品目コード:${r['品目ｺｰﾄﾞ'] || '-'}）`;
+  updateCorrectionOldCode();
+  $('correctionNewCode').value = state.correctionPendingCode;
+  $('correctionConfirm').classList.remove('hidden');
+}
+
+function updateCorrectionOldCode() {
+  if (!state.correctionSelectedHit) return;
+  const r = state.correctionSelectedHit.row;
+  const kubun = $('correctionKubun').value;
+  $('correctionOldCode').value = (kubun === 'ITF' ? r['ITF'] : r['JAN']) ?? '(未登録)';
+}
+$('correctionKubun').addEventListener('change', updateCorrectionOldCode);
+
+$('cancelCorrectionBtn').addEventListener('click', () => {
+  $('correctionCard').classList.add('hidden');
+});
+
+$('addCorrectionBtn').addEventListener('click', () => {
+  if (!state.correctionSelectedHit) { toast('商品を選択してください'); return; }
+  const r = state.correctionSelectedHit.row;
+  const kubun = $('correctionKubun').value;
+  const entry = {
+    区分: kubun,
+    商品名: r['商品名'] || '',
+    メーカー: r['メーカー'] || '',
+    品目コード: r['品目ｺｰﾄﾞ'] || '',
+    旧コード: (kubun === 'ITF' ? r['ITF'] : r['JAN']) ?? '',
+    新コード: $('correctionNewCode').value.trim(),
+    検出日: todayStr(),
+  };
+  state.corrections.push(entry);
+  persistCorrections();
+  renderCorrectionList();
+  toast('訂正申請リストに追加しました');
+
+  // 一連の流れを終え、次のスキャンに備える
+  $('correctionCard').classList.add('hidden');
+  $('matchBox').classList.add('hidden');
+  $('matchBox').innerHTML = '';
+  $('manualJan').value = '';
+  $('manualJan').focus();
+});
+
+function removeCorrection(idx) {
+  state.corrections.splice(idx, 1);
+  persistCorrections();
+  renderCorrectionList();
+}
+
+function persistCorrections() {
+  localStorage.setItem('jan-scanner-corrections', JSON.stringify(state.corrections));
+}
+function restoreCorrections() {
+  try {
+    const raw = localStorage.getItem('jan-scanner-corrections');
+    if (raw) state.corrections = JSON.parse(raw);
+  } catch (e) { state.corrections = []; }
+}
+
+function renderCorrectionList() {
+  $('correctionListCard').classList.toggle('hidden', state.corrections.length === 0);
+  const tbody = document.querySelector('#correctionTable tbody');
+  tbody.innerHTML = '';
+  state.corrections.forEach((c, idx) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><button class="small danger" data-idx="${idx}">削除</button></td>
+      <td>${escapeHtml(c.区分)}</td>
+      <td>${escapeHtml(c.商品名)}</td>
+      <td>${escapeHtml(c.品目コード)}</td>
+      <td>${escapeHtml(c.旧コード)}</td>
+      <td>${escapeHtml(c.新コード)}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+  tbody.querySelectorAll('button[data-idx]').forEach(btn => {
+    btn.addEventListener('click', () => removeCorrection(Number(btn.dataset.idx)));
+  });
+  $('correctionListCount').textContent = state.corrections.length;
+}
+
+$('clearCorrectionBtn').addEventListener('click', () => {
+  if (state.corrections.length && !confirm('コード訂正申請リストを空にします。よろしいですか？')) return;
+  state.corrections = [];
+  persistCorrections();
+  renderCorrectionList();
+});
+
+const CORRECTION_COLUMNS = ['区分', '商品名', 'メーカー', '品目コード', '旧コード', '新コード', '検出日'];
+
+$('copyCorrectionBtn').addEventListener('click', async () => {
+  if (!state.corrections.length) { toast('リストが空です'); return; }
+  let text = CORRECTION_COLUMNS.join('\t') + '\n';
+  for (const c of state.corrections) {
+    text += CORRECTION_COLUMNS.map(col => c[col] ?? '').join('\t') + '\n';
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('コピーしました');
+  } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    toast('コピーしました');
+  }
+});
+
+$('saveCorrectionExcelBtn').addEventListener('click', () => {
+  if (!state.corrections.length) { toast('リストが空です'); return; }
+  const rows = state.corrections.map(c => CORRECTION_COLUMNS.map(col => c[col] ?? ''));
+  const ws = XLSX.utils.aoa_to_sheet([CORRECTION_COLUMNS, ...rows]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'コード訂正申請');
+  const d = new Date();
+  const stamp = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}_${String(d.getHours()).padStart(2,'0')}${String(d.getMinutes()).padStart(2,'0')}`;
+  XLSX.writeFile(wb, `コード訂正申請_${stamp}.xlsx`);
+  toast('Excelファイルを保存しました');
+});
+
 /* ---------- 初期化 ---------- */
 
 (async function init() {
@@ -720,6 +909,8 @@ $('copyAppBtn').addEventListener('click', async () => {
   renderList();
   restoreApplications();
   renderAppList();
+  restoreCorrections();
+  renderCorrectionList();
   await tryLoadSavedAppTemplate();
   const loaded = await tryLoadSavedMaster();
   if (!loaded) {

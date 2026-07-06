@@ -107,6 +107,58 @@
     <div id="matchBox" class="hidden"></div>
   </section>
 
+  <section class="card hidden" id="correctionCard">
+    <h2>JAN/ITFコードの訂正申請</h2>
+    <p class="muted" id="correctionTargetInfo"></p>
+    <div class="row">
+      <div>
+        <label class="muted">コードの種類</label>
+        <select id="correctionKubun" style="width:100%;">
+          <option value="JAN">JANコード</option>
+          <option value="ITF">ITFコード（外箱）</option>
+        </select>
+      </div>
+    </div>
+    <div style="margin-top:10px;">
+      <p class="muted">正しい商品を検索してください（商品名・メーカーの一部でOK）：</p>
+      <input type="text" id="correctionSearch" placeholder="例：味の素　赤袋">
+      <div id="correctionSearchResults" style="margin-top:8px; display:flex; flex-direction:column; gap:6px;"></div>
+    </div>
+    <div id="correctionConfirm" class="hidden" style="margin-top:12px; padding:12px; border-radius:8px; background:#eef4fb; border:1px solid #9db8d6;">
+      <div class="name" id="correctionConfirmName"></div>
+      <div class="row" style="margin-top:8px;">
+        <div>
+          <label class="muted">旧コード（マスタ登録済み）</label>
+          <input type="text" id="correctionOldCode" readonly>
+        </div>
+        <div>
+          <label class="muted">新コード（実際に読み取った値）</label>
+          <input type="text" id="correctionNewCode">
+        </div>
+      </div>
+      <div style="margin-top:10px;">
+        <button id="addCorrectionBtn">訂正申請リストに追加</button>
+        <button id="cancelCorrectionBtn" class="secondary">やめる</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="card hidden" id="correctionListCard">
+    <h2>JAN/ITFコード訂正申請リスト（<span id="correctionListCount">0</span>件）</h2>
+    <p class="muted">プライスカードのリストとは別に、コード訂正だけの一覧として出力します。</p>
+    <div class="row">
+      <button id="copyCorrectionBtn" class="secondary">タブ区切りでコピー</button>
+      <button id="saveCorrectionExcelBtn" class="secondary">Excelファイルを保存</button>
+      <button id="clearCorrectionBtn" class="danger">リストを空にする</button>
+    </div>
+    <div style="overflow-x:auto; margin-top:10px;">
+      <table id="correctionTable">
+        <thead><tr><th></th><th>種類</th><th>商品名</th><th>品目コード</th><th>旧コード</th><th>新コード</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
   <section class="card hidden" id="listCard">
     <h2>③ 収集リスト（<span id="listCount">0</span>件）</h2>
     <p class="muted">スキャンした商品の一覧です（プライスカード用に JANコード・メーカー・商品名・規格・ケース・ボール・卸・ロケ・出荷・切替日付 を出力します）。</p>
