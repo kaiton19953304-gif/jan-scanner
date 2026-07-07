@@ -41,6 +41,7 @@ const state = {
   correctionPendingCode: null, // 訂正申請フロー中に保持する「見つからなかったコード」
   correctionSelectedHit: null, // 訂正申請フローで検索して選んだ商品
   currentShelf: null, // ロケーション登録で今スキャンした商品を追加する先の棚(ロケ番号)
+  mode: 'price', // 'price' | 'location' | 'correction'
   locations: [],     // [{ 商品名, メーカー, 品目コード, 旧ロケ, 新ロケ, 登録日 }]
 };
 
@@ -162,20 +163,34 @@ function renderMasterInfo(meta) {
 
 function showMainScreens() {
   $('scanCard').classList.remove('hidden');
-  $('listCard').classList.remove('hidden');
+  applyModeVisibility();
   // バーコードリーダーですぐ読み取れるよう、JAN入力欄にフォーカスしておく
   setTimeout(() => $('manualJan').focus(), 0);
 }
 
-$('toggleShelfBtn').addEventListener('click', () => {
-  const card = $('shelfCard');
-  const show = card.classList.contains('hidden');
-  card.classList.toggle('hidden', !show);
-  if (show) {
-    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    $('shelfInput').focus();
-  }
+/* ---------- モード切り替え（プライス発行／ロケ登録／申請） ---------- */
+
+const MODES = ['price', 'location', 'correction'];
+
+function setMode(mode) {
+  state.mode = mode;
+  localStorage.setItem('jan-scanner-mode', mode);
+  MODES.forEach(m => $(`modeBtn-${m}`).classList.toggle('active', m === mode));
+  clearMatchAndInput();
+  applyModeVisibility();
+}
+
+MODES.forEach(m => {
+  $(`modeBtn-${m}`).addEventListener('click', () => setMode(m));
 });
+
+// モードと中身の有無に応じて、各出力リストの表示/非表示をまとめて切り替える
+function applyModeVisibility() {
+  $('shelfCard').classList.toggle('hidden', state.mode !== 'location');
+  $('listCard').classList.toggle('hidden', !(state.mode === 'price' && state.collected.length > 0));
+  $('locationListCard').classList.toggle('hidden', !(state.mode === 'location' && state.locations.length > 0));
+  $('correctionListCard').classList.toggle('hidden', !(state.mode === 'correction' && state.corrections.length > 0));
+}
 
 $('masterFile').addEventListener('change', async (e) => {
   const file = e.target.files[0];
@@ -251,8 +266,8 @@ $('startScanBtn').addEventListener('click', async () => {
       { facingMode: 'environment' },
       {
         fps: 15,
-        // 1次元バーコードは横長なので、箱に対して横幅を広めに取る
-        qrbox: { width: 280, height: 120 },
+        // 1次元バーコードは横長なので、枠(170x110)に対して横幅を広めに取る
+        qrbox: { width: 150, height: 80 },
         disableFlip: true,
         aspectRatio: 4 / 3,
       },
@@ -394,22 +409,28 @@ function renderHitBox(hit, code) {
   const r = hit.row;
   const isItf = normalizeJan(code) !== normalizeJan(r['JAN']);
   const codeLabel = isItf ? `ITF(外箱): ${escapeHtml(String(code))} ／ JAN: ${escapeHtml(String(r['JAN'] ?? '-'))}` : `JAN: ${escapeHtml(String(code))}`;
-  const shelfBtnLabel = state.currentShelf
-    ? `この棚(${escapeHtml(state.currentShelf)})に追加`
-    : '商品を追加する（棚が未選択）';
+  let actionHtml = '';
+  if (state.mode === 'price') {
+    actionHtml = `<button id="addToListBtn">リストに追加</button>`;
+  } else if (state.mode === 'location') {
+    const shelfBtnLabel = state.currentShelf
+      ? `この棚(${escapeHtml(state.currentShelf)})に追加`
+      : '商品を追加する（棚が未選択）';
+    actionHtml = `<button id="addLocationOpenBtn" class="secondary">${shelfBtnLabel}</button>`;
+  }
   box.innerHTML = `
     <div class="name">${escapeHtml(r['商品名'] || '')} <span class="badge">${escapeHtml(hit.sheet)}</span></div>
     <div class="meta">${codeLabel} ／ 規格: ${escapeHtml(r['規格'] || '-')} ／ 卸: ${escapeHtml(String(r['卸'] ?? r['卸（ランク1）'] ?? '-'))} ／ ロケ: ${escapeHtml(r['ロケ'] || '-')}</div>
-    <div style="margin-top:8px; display:flex; gap:8px;">
-      <button id="addToListBtn">リストに追加</button>
-      <button id="addLocationOpenBtn" class="secondary">${shelfBtnLabel}</button>
-    </div>
+    ${actionHtml ? `<div style="margin-top:8px; display:flex; gap:8px;">${actionHtml}</div>` : ''}
   `;
-  $('addToListBtn').addEventListener('click', () => {
-    addToList(hit, code);
-    clearMatchAndInput();
-  });
-  $('addLocationOpenBtn').addEventListener('click', () => addProductToCurrentShelf(hit));
+  if (state.mode === 'price') {
+    $('addToListBtn').addEventListener('click', () => {
+      addToList(hit, code);
+      clearMatchAndInput();
+    });
+  } else if (state.mode === 'location') {
+    $('addLocationOpenBtn').addEventListener('click', () => addProductToCurrentShelf(hit));
+  }
 }
 
 // 追加済みかどうか一目で分かるよう、表示と入力欄をクリアして次のスキャンに備える
@@ -428,12 +449,17 @@ function handleCode(code) {
 
   if (candidates.length === 0) {
     box.className = 'notfound';
+    const correctionBtnHtml = state.mode === 'correction'
+      ? `<div style="margin-top:8px;"><button id="openCorrectionBtn" class="secondary">JAN/ITFコードの訂正申請</button></div>`
+      : '';
     box.innerHTML = `
       <div class="name">マスタに見つかりませんでした</div>
       <div class="meta">JAN: ${escapeHtml(String(code))}（新規商品の可能性、またはメーカー都合のコード変更の可能性があります）</div>
-      <div style="margin-top:8px;"><button id="openCorrectionBtn" class="secondary">JAN/ITFコードの訂正申請</button></div>
+      ${correctionBtnHtml}
     `;
-    $('openCorrectionBtn').addEventListener('click', () => startCorrectionFlow(code));
+    if (state.mode === 'correction') {
+      $('openCorrectionBtn').addEventListener('click', () => startCorrectionFlow(code));
+    }
     return;
   }
 
@@ -498,6 +524,7 @@ function restoreCollected() {
 }
 
 function renderList() {
+  applyModeVisibility();
   const tbody = document.querySelector('#listTable tbody');
   tbody.innerHTML = '';
   state.collected.forEach((c, idx) => {
@@ -649,7 +676,7 @@ function restoreLocations() {
 }
 
 function renderLocationList() {
-  $('locationListCard').classList.toggle('hidden', state.locations.length === 0);
+  applyModeVisibility();
   const tbody = document.querySelector('#locationTable tbody');
   tbody.innerHTML = '';
   state.locations.forEach((loc, idx) => {
@@ -818,7 +845,7 @@ function restoreCorrections() {
 }
 
 function renderCorrectionList() {
-  $('correctionListCard').classList.toggle('hidden', state.corrections.length === 0);
+  applyModeVisibility();
   const tbody = document.querySelector('#correctionTable tbody');
   tbody.innerHTML = '';
   state.corrections.forEach((c, idx) => {
@@ -883,6 +910,9 @@ $('saveCorrectionExcelBtn').addEventListener('click', () => {
 /* ---------- 初期化 ---------- */
 
 (async function init() {
+  state.mode = localStorage.getItem('jan-scanner-mode') || 'price';
+  MODES.forEach(m => $(`modeBtn-${m}`).classList.toggle('active', m === state.mode));
+
   restoreCollected();
   renderList();
   restoreCorrections();
