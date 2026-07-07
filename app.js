@@ -35,14 +35,13 @@ const state = {
   janMap: new Map(), // normalizedJan -> [{ sheet, row }]
   itfMap: new Map(), // normalizedITF(外箱コード) -> [{ sheet, row }]
   collected: [],     // [{ sheet, row }]
-  applications: [],  // [{ 区分, 実行日付, 入力日付, 商品コード, 小売, 仕切, 備考, _display:{商品名, JAN} }]
   html5QrCode: null,
   scanning: false,
-  lastMatch: null,   // 直近にマッチした商品（申請行作成の対象）
-  appTemplate: null, // { fileLabel, sheetName, header:[...] }
   corrections: [],   // [{ 区分:'JAN'|'ITF', 商品名, メーカー, 品目コード, 旧コード, 新コード, 検出日 }]
   correctionPendingCode: null, // 訂正申請フロー中に保持する「見つからなかったコード」
   correctionSelectedHit: null, // 訂正申請フローで検索して選んだ商品
+  locationTarget: null, // ロケーション追加フロー中に保持する対象商品
+  locations: [],     // [{ 商品名, メーカー, 品目コード, 旧ロケ, 新ロケ, 登録日 }]
 };
 
 const $ = (id) => document.getElementById(id);
@@ -390,25 +389,23 @@ function renderHitBox(hit, code) {
     <div class="meta">${codeLabel} ／ 規格: ${escapeHtml(r['規格'] || '-')} ／ 卸: ${escapeHtml(String(r['卸'] ?? r['卸（ランク1）'] ?? '-'))} ／ ロケ: ${escapeHtml(r['ロケ'] || '-')}</div>
     <div style="margin-top:8px; display:flex; gap:8px;">
       <button id="addToListBtn">リストに追加</button>
-      <button id="setAppTargetBtn" class="secondary">申請対象にする</button>
+      <button id="addLocationOpenBtn" class="secondary">ロケーション追加</button>
     </div>
   `;
   $('addToListBtn').addEventListener('click', () => {
     addToList(hit, code);
-    // 追加済みかどうか一目で分かるよう、表示と入力欄をクリアして次のスキャンに備える
-    box.classList.add('hidden');
-    box.innerHTML = '';
-    $('manualJan').value = '';
-    $('manualJan').focus();
+    clearMatchAndInput();
   });
-  $('setAppTargetBtn').addEventListener('click', () => setAppTarget(hit, code));
+  $('addLocationOpenBtn').addEventListener('click', () => startLocationFlow(hit, code));
 }
 
-function setAppTarget(hit, code) {
-  state.lastMatch = { hit, code };
-  const r = hit.row;
-  $('appFormTarget').textContent = `対象商品：${r['商品名'] || ''}（商品コード: ${r['品目ｺｰﾄﾞ'] || '未取得'} ／ JAN: ${code}）`;
-  toast('申請対象に設定しました');
+// 追加済みかどうか一目で分かるよう、表示と入力欄をクリアして次のスキャンに備える
+function clearMatchAndInput() {
+  const box = $('matchBox');
+  box.classList.add('hidden');
+  box.innerHTML = '';
+  $('manualJan').value = '';
+  $('manualJan').focus();
 }
 
 function handleCode(code) {
@@ -571,156 +568,104 @@ $('saveExcelBtn').addEventListener('click', () => {
   toast('Excelファイルを保存しました');
 });
 
-/* ---------- 申請テンプレート ---------- */
-
-let pendingAppWorkbook = null; // シート選択待ちの間だけ保持
-
-$('appTemplateFile').addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const buf = await file.arrayBuffer();
-  const wb = XLSX.read(buf, { type: 'array' });
-  pendingAppWorkbook = { wb, fileLabel: file.name };
-
-  const select = $('appSheetSelect');
-  select.innerHTML = '';
-  wb.SheetNames.forEach((name) => {
-    const opt = document.createElement('option');
-    opt.value = name;
-    opt.textContent = name;
-    select.appendChild(opt);
-  });
-  // それらしい名前を推測して初期選択
-  const guess = wb.SheetNames.find(n => n.includes('登録') || n.includes('入力'));
-  if (guess) select.value = guess;
-
-  $('appSheetPicker').classList.remove('hidden');
-  $('appTemplateStatus').textContent = 'シートを選択して「これに決定」を押してください';
-});
-
-$('appSheetConfirmBtn').addEventListener('click', async () => {
-  if (!pendingAppWorkbook) return;
-  const sheetName = $('appSheetSelect').value;
-  const ws = pendingAppWorkbook.wb.Sheets[sheetName];
-  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-  const header = (rows[0] || []).map(h => (h === undefined ? '' : String(h)));
-
-  state.appTemplate = { fileLabel: pendingAppWorkbook.fileLabel, sheetName, header };
-  await idbSet('appTemplate', state.appTemplate);
-
-  $('appTemplateStatus').textContent = `「${sheetName}」を申請一覧表として設定しました（${header.filter(h => h).length}列）`;
-  $('appSheetPicker').classList.add('hidden');
-  $('appFormCard').classList.remove('hidden');
-  $('appListCard').classList.remove('hidden');
-  toast('申請テンプレートを設定しました');
-});
-
-async function tryLoadSavedAppTemplate() {
-  const tpl = await idbGet('appTemplate');
-  if (tpl) {
-    state.appTemplate = tpl;
-    $('appTemplateStatus').textContent = `「${tpl.sheetName}」（${tpl.fileLabel}）を申請一覧表として使用中`;
-    $('appFormCard').classList.remove('hidden');
-    $('appListCard').classList.remove('hidden');
-  }
-}
-
-/* ---------- 申請リスト ---------- */
-
 function todayStr() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
-$('appNyuryokuDate').value = todayStr();
 
-function dateInputToExcelStr(v) {
-  if (!v) return '';
-  const [y, m, d] = v.split('-');
-  return `${y}/${Number(m)}/${Number(d)}`;
+/* ---------- ロケーション追加 ---------- */
+
+function startLocationFlow(hit, code) {
+  state.locationTarget = { hit, code };
+  const r = hit.row;
+  $('locationTargetInfo').textContent = `対象商品：${r['商品名'] || ''}（品目コード: ${r['品目ｺｰﾄﾞ'] || '未取得'} ／ 現在のロケ: ${r['ロケ'] || '-'}）`;
+  $('locationNewCode').value = '';
+  $('locationCard').classList.remove('hidden');
+  $('locationCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  setTimeout(() => $('locationNewCode').focus(), 100);
 }
 
-$('addAppBtn').addEventListener('click', () => {
-  if (!state.lastMatch) {
-    toast('先にスキャン結果から「申請対象にする」を選んでください');
-    return;
-  }
-  const r = state.lastMatch.hit.row;
-  const entry = {
-    区分: $('appKubun').value,
-    実行日付: dateInputToExcelStr($('appJikkoDate').value),
-    入力日付: dateInputToExcelStr($('appNyuryokuDate').value),
-    商品コード: r['品目ｺｰﾄﾞ'] || '',
-    小売: $('appKouri').value,
-    仕切: $('appShikiri').value,
-    備考: $('appBiko').value,
-    _display: { 商品名: r['商品名'] || '', JAN: state.lastMatch.code },
-  };
-  state.applications.push(entry);
-  persistApplications();
-  renderAppList();
-  toast('申請リストに追加しました');
-  $('appKouri').value = '';
-  $('appShikiri').value = '';
-  $('appBiko').value = '';
+$('cancelLocationBtn').addEventListener('click', () => {
+  $('locationCard').classList.add('hidden');
 });
 
-function removeApplication(idx) {
-  state.applications.splice(idx, 1);
-  persistApplications();
-  renderAppList();
+$('addLocationBtn').addEventListener('click', () => {
+  if (!state.locationTarget) { toast('対象商品が選択されていません'); return; }
+  const newLoc = $('locationNewCode').value.trim();
+  if (!newLoc) { toast('ロケ番号を入力してください'); return; }
+  const r = state.locationTarget.hit.row;
+  const entry = {
+    商品名: r['商品名'] || '',
+    メーカー: r['メーカー'] || '',
+    品目コード: r['品目ｺｰﾄﾞ'] || '',
+    旧ロケ: r['ロケ'] || '',
+    新ロケ: newLoc,
+    登録日: todayStr(),
+  };
+  state.locations.push(entry);
+  persistLocations();
+  renderLocationList();
+  toast('ロケーション登録リストに追加しました');
+
+  $('locationCard').classList.add('hidden');
+  clearMatchAndInput();
+});
+
+function removeLocation(idx) {
+  state.locations.splice(idx, 1);
+  persistLocations();
+  renderLocationList();
 }
 
-function persistApplications() {
-  localStorage.setItem('jan-scanner-applications', JSON.stringify(state.applications));
+function persistLocations() {
+  localStorage.setItem('jan-scanner-locations', JSON.stringify(state.locations));
 }
-function restoreApplications() {
+function restoreLocations() {
   try {
-    const raw = localStorage.getItem('jan-scanner-applications');
-    if (raw) state.applications = JSON.parse(raw);
-  } catch (e) { state.applications = []; }
+    const raw = localStorage.getItem('jan-scanner-locations');
+    if (raw) state.locations = JSON.parse(raw);
+  } catch (e) { state.locations = []; }
 }
 
-function renderAppList() {
-  const tbody = document.querySelector('#appTable tbody');
+function renderLocationList() {
+  $('locationListCard').classList.toggle('hidden', state.locations.length === 0);
+  const tbody = document.querySelector('#locationTable tbody');
   tbody.innerHTML = '';
-  state.applications.forEach((a, idx) => {
+  state.locations.forEach((loc, idx) => {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><button class="small danger" data-idx="${idx}">削除</button></td>
-      <td>${escapeHtml(a.区分)}</td>
-      <td>${escapeHtml(a._display?.商品名 || '')}</td>
-      <td>${escapeHtml(a.商品コード || '(未登録)')}</td>
-      <td>${escapeHtml(a.実行日付)}</td>
-      <td>${escapeHtml(a.小売)}</td>
-      <td>${escapeHtml(a.仕切)}</td>
-      <td>${escapeHtml(a.備考)}</td>
+      <td>${escapeHtml(loc.商品名)}</td>
+      <td>${escapeHtml(loc.品目コード)}</td>
+      <td>${escapeHtml(loc.旧ロケ)}</td>
+      <td>${escapeHtml(loc.新ロケ)}</td>
     `;
     tbody.appendChild(tr);
   });
   tbody.querySelectorAll('button[data-idx]').forEach(btn => {
-    btn.addEventListener('click', () => removeApplication(Number(btn.dataset.idx)));
+    btn.addEventListener('click', () => removeLocation(Number(btn.dataset.idx)));
   });
-  $('appListCount').textContent = state.applications.length;
+  $('locationListCount').textContent = state.locations.length;
 }
 
-$('clearAppBtn').addEventListener('click', () => {
-  if (state.applications.length && !confirm('申請リストを空にします。よろしいですか？')) return;
-  state.applications = [];
-  persistApplications();
-  renderAppList();
+$('clearLocationBtn').addEventListener('click', () => {
+  if (state.locations.length && !confirm('ロケーション登録リストを空にします。よろしいですか？')) return;
+  state.locations = [];
+  persistLocations();
+  renderLocationList();
 });
 
-$('copyAppBtn').addEventListener('click', async () => {
-  if (!state.applications.length) { toast('申請リストが空です'); return; }
-  if (!state.appTemplate) { toast('申請テンプレートが未設定です'); return; }
-  const header = state.appTemplate.header;
-  let text = '';
-  for (const a of state.applications) {
-    text += header.map(h => (h && a[h] !== undefined) ? a[h] : '').join('\t') + '\n';
+const LOCATION_COLUMNS = ['商品名', 'メーカー', '品目コード', '旧ロケ', '新ロケ', '登録日'];
+
+$('copyLocationBtn').addEventListener('click', async () => {
+  if (!state.locations.length) { toast('リストが空です'); return; }
+  let text = LOCATION_COLUMNS.join('\t') + '\n';
+  for (const loc of state.locations) {
+    text += LOCATION_COLUMNS.map(col => loc[col] ?? '').join('\t') + '\n';
   }
   try {
     await navigator.clipboard.writeText(text);
-    toast('コピーしました。表の一番下の空き行に貼り付けてください');
+    toast('コピーしました');
   } catch (e) {
     const ta = document.createElement('textarea');
     ta.value = text;
@@ -730,6 +675,18 @@ $('copyAppBtn').addEventListener('click', async () => {
     document.body.removeChild(ta);
     toast('コピーしました');
   }
+});
+
+$('saveLocationExcelBtn').addEventListener('click', () => {
+  if (!state.locations.length) { toast('リストが空です'); return; }
+  const rows = state.locations.map(loc => LOCATION_COLUMNS.map(col => loc[col] ?? ''));
+  const ws = XLSX.utils.aoa_to_sheet([LOCATION_COLUMNS, ...rows]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'ロケーション登録');
+  const d = new Date();
+  const stamp = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}_${String(d.getHours()).padStart(2,'0')}${String(d.getMinutes()).padStart(2,'0')}`;
+  XLSX.writeFile(wb, `ロケーション登録_${stamp}.xlsx`);
+  toast('Excelファイルを保存しました');
 });
 
 /* ---------- JAN/ITFコード訂正申請 ---------- */
@@ -820,10 +777,7 @@ $('addCorrectionBtn').addEventListener('click', () => {
 
   // 一連の流れを終え、次のスキャンに備える
   $('correctionCard').classList.add('hidden');
-  $('matchBox').classList.add('hidden');
-  $('matchBox').innerHTML = '';
-  $('manualJan').value = '';
-  $('manualJan').focus();
+  clearMatchAndInput();
 });
 
 function removeCorrection(idx) {
@@ -910,11 +864,10 @@ $('saveCorrectionExcelBtn').addEventListener('click', () => {
 (async function init() {
   restoreCollected();
   renderList();
-  restoreApplications();
-  renderAppList();
   restoreCorrections();
   renderCorrectionList();
-  await tryLoadSavedAppTemplate();
+  restoreLocations();
+  renderLocationList();
   const loaded = await tryLoadSavedMaster();
   if (!loaded) {
     $('setupCard').classList.remove('hidden');

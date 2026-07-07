@@ -175,73 +175,32 @@
     </div>
   </section>
 
-  <section class="card" id="appTemplateSetupCard">
-    <h2>④ 申請用テンプレートの読み込み（任意）</h2>
-    <p class="muted">商品登録・変更の申請行を蓄積しているExcelファイルを選択してください。</p>
-    <input type="file" id="appTemplateFile" accept=".xlsx,.xls">
-    <div id="appSheetPicker" class="hidden" style="margin-top:10px;">
-      <p class="muted">どのシートが申請の一覧表ですか？</p>
-      <select id="appSheetSelect"></select>
-      <button id="appSheetConfirmBtn" class="small" style="margin-left:6px;">これに決定</button>
-    </div>
-    <p class="muted" id="appTemplateStatus"></p>
-  </section>
-
-  <section class="card hidden" id="appFormCard">
-    <h2>⑤ 申請行の作成</h2>
-    <p class="muted" id="appFormTarget">対象商品：スキャンまたは検索で商品を選択してください</p>
+  <section class="card hidden" id="locationCard">
+    <h2>ロケーション追加</h2>
+    <p class="muted" id="locationTargetInfo"></p>
     <div class="row">
       <div>
-        <label class="muted">区分</label>
-        <select id="appKubun" style="width:100%;">
-          <option value="値上">値上</option>
-          <option value="登録">登録</option>
-          <option value="変更">変更</option>
-          <option value="カット">カット</option>
-          <option value="B登録">B登録</option>
-          <option value="ロケ">ロケ</option>
-        </select>
+        <label class="muted">ロケ番号</label>
+        <input type="text" id="locationNewCode" placeholder="例：F06-2">
       </div>
-    </div>
-    <div class="row" style="margin-top:8px;">
-      <div>
-        <label class="muted">実行日付</label>
-        <input type="date" id="appJikkoDate">
-      </div>
-      <div>
-        <label class="muted">入力日付</label>
-        <input type="date" id="appNyuryokuDate">
-      </div>
-    </div>
-    <div class="row" style="margin-top:8px;">
-      <div>
-        <label class="muted">新・小売</label>
-        <input type="number" id="appKouri">
-      </div>
-      <div>
-        <label class="muted">新・仕切</label>
-        <input type="number" id="appShikiri">
-      </div>
-    </div>
-    <div style="margin-top:8px;">
-      <label class="muted">備考</label>
-      <input type="text" id="appBiko">
     </div>
     <div style="margin-top:10px;">
-      <button id="addAppBtn">申請リストに追加</button>
+      <button id="addLocationBtn">ロケーション登録リストに追加</button>
+      <button id="cancelLocationBtn" class="secondary">やめる</button>
     </div>
   </section>
 
-  <section class="card hidden" id="appListCard">
-    <h2>⑥ 申請リスト（<span id="appListCount">0</span>件）</h2>
-    <p class="muted">「コピー」で、Excelテンプレートの表の一番下の空き行に貼り付けてください（見出し行は含みません）。商品コードが無い新規商品は、メーカー・商品名等も別途手入力が必要です。</p>
+  <section class="card hidden" id="locationListCard">
+    <h2>ロケーション登録リスト（<span id="locationListCount">0</span>件）</h2>
+    <p class="muted">プライスカードやコード訂正のリストとは別に、ロケーション変更だけの一覧として出力します。</p>
     <div class="row">
-      <button id="copyAppBtn" class="secondary">タブ区切りでコピー</button>
-      <button id="clearAppBtn" class="danger">申請リストを空にする</button>
+      <button id="copyLocationBtn" class="secondary">タブ区切りでコピー</button>
+      <button id="saveLocationExcelBtn" class="secondary">Excelファイルを保存</button>
+      <button id="clearLocationBtn" class="danger">リストを空にする</button>
     </div>
     <div style="overflow-x:auto; margin-top:10px;">
-      <table id="appTable">
-        <thead><tr><th></th><th>区分</th><th>商品名</th><th>商品コード</th><th>実行日付</th><th>小売</th><th>仕切</th><th>備考</th></tr></thead>
+      <table id="locationTable">
+        <thead><tr><th></th><th>商品名</th><th>品目コード</th><th>旧ロケ</th><th>新ロケ</th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
