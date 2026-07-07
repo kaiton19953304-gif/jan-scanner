@@ -163,10 +163,19 @@ function renderMasterInfo(meta) {
 function showMainScreens() {
   $('scanCard').classList.remove('hidden');
   $('listCard').classList.remove('hidden');
-  $('shelfCard').classList.remove('hidden');
   // バーコードリーダーですぐ読み取れるよう、JAN入力欄にフォーカスしておく
   setTimeout(() => $('manualJan').focus(), 0);
 }
+
+$('toggleShelfBtn').addEventListener('click', () => {
+  const card = $('shelfCard');
+  const show = card.classList.contains('hidden');
+  card.classList.toggle('hidden', !show);
+  if (show) {
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    $('shelfInput').focus();
+  }
+});
 
 $('masterFile').addEventListener('change', async (e) => {
   const file = e.target.files[0];
@@ -602,6 +611,7 @@ $('setShelfBtn').addEventListener('click', () => {
 function addProductToCurrentShelf(hit) {
   if (!state.currentShelf) {
     toast('先に棚を選んでください');
+    $('shelfCard').classList.remove('hidden');
     $('shelfCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
     $('shelfInput').focus();
     return;

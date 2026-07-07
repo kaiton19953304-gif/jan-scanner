@@ -1,4 +1,4 @@
-const CACHE_NAME = 'jan-scanner-v9';
+const CACHE_NAME = 'jan-scanner-v10';
 const ASSETS = [
   './',
   './index.html',
