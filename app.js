@@ -244,6 +244,22 @@ function onScanSuccess(decodedText) {
 
 function onScanFailure() { /* 毎フレーム呼ばれるため無視 */ }
 
+function getScanConfig() {
+  return {
+    fps: 15,
+    // 1次元バーコードは横長なので、枠(170x110)に対して横幅を広めに取る
+    qrbox: { width: 150, height: 80 },
+    disableFlip: true,
+    aspectRatio: 4 / 3,
+    // 解像度を上げることでカメラがより高精細なモードを選び、ピントが合いやすくなることがある
+    videoConstraints: {
+      facingMode: 'environment',
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+    },
+  };
+}
+
 $('startScanBtn').addEventListener('click', async () => {
   $('reader').classList.remove('hidden');
   $('startScanBtn').classList.add('hidden');
@@ -264,24 +280,47 @@ $('startScanBtn').addEventListener('click', async () => {
   try {
     await state.html5QrCode.start(
       { facingMode: 'environment' },
-      {
-        fps: 15,
-        // 1次元バーコードは横長なので、枠(170x110)に対して横幅を広めに取る
-        qrbox: { width: 150, height: 80 },
-        disableFlip: true,
-        aspectRatio: 4 / 3,
-      },
+      getScanConfig(),
       onScanSuccess,
       onScanFailure
     );
     state.scanning = true;
     setupTorchToggle();
+    await applyContinuousFocus();
+    $('refocusBtn').classList.remove('hidden');
   } catch (err) {
     console.error(err);
     toast('カメラを起動できませんでした: ' + err);
     $('startScanBtn').classList.remove('hidden');
     $('stopScanBtn').classList.add('hidden');
     $('reader').classList.add('hidden');
+  }
+});
+
+// 対応端末では連続オートフォーカスを明示的に要求する（非対応端末では何も起きない）
+async function applyContinuousFocus() {
+  try {
+    await state.html5QrCode.applyVideoConstraints({
+      advanced: [{ focusMode: 'continuous' }],
+    });
+  } catch (e) { /* 未対応端末は無視 */ }
+}
+
+// ピントが合わない時に、カメラを一瞬止めて再起動しオートフォーカスをやり直させる
+$('refocusBtn').addEventListener('click', async () => {
+  if (!state.html5QrCode || !state.scanning) return;
+  try {
+    await state.html5QrCode.stop();
+    await state.html5QrCode.start(
+      { facingMode: 'environment' },
+      getScanConfig(),
+      onScanSuccess,
+      onScanFailure
+    );
+    await applyContinuousFocus();
+    toast('ピントを合わせ直しています');
+  } catch (e) {
+    console.error(e);
   }
 });
 
@@ -296,6 +335,7 @@ async function stopScanning() {
   $('startScanBtn').classList.remove('hidden');
   $('stopScanBtn').classList.add('hidden');
   $('torchBtn').classList.add('hidden');
+  $('refocusBtn').classList.add('hidden');
 }
 
 // ライト(トーチ)に対応した端末だけボタンを表示する
