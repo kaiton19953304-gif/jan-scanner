@@ -107,6 +107,16 @@
     <div id="matchBox" class="hidden"></div>
   </section>
 
+  <section class="card hidden" id="shelfCard">
+    <h2>ロケーション登録：棚を選ぶ</h2>
+    <p class="muted">先に棚（ロケ番号）を選んでおくと、そのあとスキャンする商品をワンタップでその棚に登録できます。</p>
+    <p class="name" id="currentShelfDisplay" style="font-size:16px; font-weight:bold; margin:8px 0;">現在の棚：未選択</p>
+    <div class="row">
+      <input type="text" id="shelfInput" placeholder="例：F06-2">
+      <button id="setShelfBtn" style="flex:0 0 auto;">この棚に設定</button>
+    </div>
+  </section>
+
   <section class="card hidden" id="correctionCard">
     <h2>JAN/ITFコードの訂正申請</h2>
     <p class="muted" id="correctionTargetInfo"></p>
@@ -175,22 +185,7 @@
     </div>
   </section>
 
-  <section class="card hidden" id="locationCard">
-    <h2>ロケーション追加</h2>
-    <p class="muted" id="locationTargetInfo"></p>
-    <div class="row">
-      <div>
-        <label class="muted">ロケ番号</label>
-        <input type="text" id="locationNewCode" placeholder="例：F06-2">
-      </div>
-    </div>
-    <div style="margin-top:10px;">
-      <button id="addLocationBtn">ロケーション登録リストに追加</button>
-      <button id="cancelLocationBtn" class="secondary">やめる</button>
-    </div>
-  </section>
-
-  <section class="card hidden" id="locationListCard">
+<section class="card hidden" id="locationListCard">
     <h2>ロケーション登録リスト（<span id="locationListCount">0</span>件）</h2>
     <p class="muted">プライスカードやコード訂正のリストとは別に、ロケーション変更だけの一覧として出力します。</p>
     <div class="row">

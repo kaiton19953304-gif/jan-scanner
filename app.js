@@ -40,7 +40,7 @@ const state = {
   corrections: [],   // [{ 区分:'JAN'|'ITF', 商品名, メーカー, 品目コード, 旧コード, 新コード, 検出日 }]
   correctionPendingCode: null, // 訂正申請フロー中に保持する「見つからなかったコード」
   correctionSelectedHit: null, // 訂正申請フローで検索して選んだ商品
-  locationTarget: null, // ロケーション追加フロー中に保持する対象商品
+  currentShelf: null, // ロケーション登録で今スキャンした商品を追加する先の棚(ロケ番号)
   locations: [],     // [{ 商品名, メーカー, 品目コード, 旧ロケ, 新ロケ, 登録日 }]
 };
 
@@ -163,6 +163,7 @@ function renderMasterInfo(meta) {
 function showMainScreens() {
   $('scanCard').classList.remove('hidden');
   $('listCard').classList.remove('hidden');
+  $('shelfCard').classList.remove('hidden');
   // バーコードリーダーですぐ読み取れるよう、JAN入力欄にフォーカスしておく
   setTimeout(() => $('manualJan').focus(), 0);
 }
@@ -384,19 +385,22 @@ function renderHitBox(hit, code) {
   const r = hit.row;
   const isItf = normalizeJan(code) !== normalizeJan(r['JAN']);
   const codeLabel = isItf ? `ITF(外箱): ${escapeHtml(String(code))} ／ JAN: ${escapeHtml(String(r['JAN'] ?? '-'))}` : `JAN: ${escapeHtml(String(code))}`;
+  const shelfBtnLabel = state.currentShelf
+    ? `この棚(${escapeHtml(state.currentShelf)})に追加`
+    : '商品を追加する（棚が未選択）';
   box.innerHTML = `
     <div class="name">${escapeHtml(r['商品名'] || '')} <span class="badge">${escapeHtml(hit.sheet)}</span></div>
     <div class="meta">${codeLabel} ／ 規格: ${escapeHtml(r['規格'] || '-')} ／ 卸: ${escapeHtml(String(r['卸'] ?? r['卸（ランク1）'] ?? '-'))} ／ ロケ: ${escapeHtml(r['ロケ'] || '-')}</div>
     <div style="margin-top:8px; display:flex; gap:8px;">
       <button id="addToListBtn">リストに追加</button>
-      <button id="addLocationOpenBtn" class="secondary">ロケーション追加</button>
+      <button id="addLocationOpenBtn" class="secondary">${shelfBtnLabel}</button>
     </div>
   `;
   $('addToListBtn').addEventListener('click', () => {
     addToList(hit, code);
     clearMatchAndInput();
   });
-  $('addLocationOpenBtn').addEventListener('click', () => startLocationFlow(hit, code));
+  $('addLocationOpenBtn').addEventListener('click', () => addProductToCurrentShelf(hit));
 }
 
 // 追加済みかどうか一目で分かるよう、表示と入力欄をクリアして次のスキャンに備える
@@ -573,43 +577,50 @@ function todayStr() {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 
-/* ---------- ロケーション追加 ---------- */
+/* ---------- ロケーション登録：棚を選ぶ → 商品を追加する ---------- */
 
-function startLocationFlow(hit, code) {
-  state.locationTarget = { hit, code };
-  const r = hit.row;
-  $('locationTargetInfo').textContent = `対象商品：${r['商品名'] || ''}（品目コード: ${r['品目ｺｰﾄﾞ'] || '未取得'} ／ 現在のロケ: ${r['ロケ'] || '-'}）`;
-  $('locationNewCode').value = '';
-  $('locationCard').classList.remove('hidden');
-  $('locationCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  setTimeout(() => $('locationNewCode').focus(), 100);
+function persistCurrentShelf() {
+  if (state.currentShelf) localStorage.setItem('jan-scanner-current-shelf', state.currentShelf);
+  else localStorage.removeItem('jan-scanner-current-shelf');
 }
 
-$('cancelLocationBtn').addEventListener('click', () => {
-  $('locationCard').classList.add('hidden');
+function renderCurrentShelf() {
+  $('currentShelfDisplay').textContent = `現在の棚：${state.currentShelf || '未選択'}`;
+}
+
+$('setShelfBtn').addEventListener('click', () => {
+  const v = $('shelfInput').value.trim();
+  if (!v) { toast('棚（ロケ番号）を入力してください'); return; }
+  state.currentShelf = v;
+  persistCurrentShelf();
+  renderCurrentShelf();
+  $('shelfInput').value = '';
+  toast(`棚を「${v}」に設定しました`);
 });
 
-$('addLocationBtn').addEventListener('click', () => {
-  if (!state.locationTarget) { toast('対象商品が選択されていません'); return; }
-  const newLoc = $('locationNewCode').value.trim();
-  if (!newLoc) { toast('ロケ番号を入力してください'); return; }
-  const r = state.locationTarget.hit.row;
+// 棚が選択済みなら、スキャンした商品をワンタップでその棚に登録する
+function addProductToCurrentShelf(hit) {
+  if (!state.currentShelf) {
+    toast('先に棚を選んでください');
+    $('shelfCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    $('shelfInput').focus();
+    return;
+  }
+  const r = hit.row;
   const entry = {
     商品名: r['商品名'] || '',
     メーカー: r['メーカー'] || '',
     品目コード: r['品目ｺｰﾄﾞ'] || '',
     旧ロケ: r['ロケ'] || '',
-    新ロケ: newLoc,
+    新ロケ: state.currentShelf,
     登録日: todayStr(),
   };
   state.locations.push(entry);
   persistLocations();
   renderLocationList();
-  toast('ロケーション登録リストに追加しました');
-
-  $('locationCard').classList.add('hidden');
+  toast(`「${entry.商品名}」を棚(${state.currentShelf})に登録しました`);
   clearMatchAndInput();
-});
+}
 
 function removeLocation(idx) {
   state.locations.splice(idx, 1);
@@ -868,6 +879,8 @@ $('saveCorrectionExcelBtn').addEventListener('click', () => {
   renderCorrectionList();
   restoreLocations();
   renderLocationList();
+  state.currentShelf = localStorage.getItem('jan-scanner-current-shelf') || null;
+  renderCurrentShelf();
   const loaded = await tryLoadSavedMaster();
   if (!loaded) {
     $('setupCard').classList.remove('hidden');
