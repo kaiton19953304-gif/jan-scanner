@@ -1,4 +1,4 @@
-const CACHE_NAME = 'jan-scanner-v12';
+const CACHE_NAME = 'jan-scanner-v13';
 const ASSETS = [
   './',
   './index.html',
@@ -27,18 +27,18 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+// オンライン時は常に最新を取りに行き（GitHub PagesのHTTPキャッシュも無視）、
+// 取得できない時だけキャッシュを使う「ネットワーク優先」に変更。
+// 以前の「キャッシュ優先」だと、更新後もずっと古い版が表示され続けてしまっていた。
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request)
-        .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-          return res;
-        })
-        .catch(() => cached);
-    })
+    fetch(event.request, { cache: 'no-store' })
+      .then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+        return res;
+      })
+      .catch(() => caches.match(event.request))
   );
 });
