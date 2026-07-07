@@ -321,25 +321,39 @@ $('keywordSearch').addEventListener('input', () => {
   keywordSearchTimer = setTimeout(() => runKeywordSearch($('keywordSearch').value), 250);
 });
 
-function runKeywordSearch(query) {
-  const resultsEl = $('keywordResults');
-  const q = query.trim().toLowerCase();
-  if (q.length < 2) {
-    resultsEl.innerHTML = '';
-    return;
-  }
+// 全角/半角の表記ゆれ（"140g"と"140ｇ"など）を吸収するための正規化
+function normalizeForSearch(s) {
+  return String(s).normalize('NFKC').toLowerCase();
+}
+
+// スペース区切りの複数キーワードによるAND検索（商品名・メーカー・規格をまたいで一致すればOK）
+function searchMasterRows(query, limit) {
+  const terms = normalizeForSearch(query).split(/[\s　]+/).filter(Boolean);
+  if (!terms.length) return [];
   const hits = [];
   outer:
   for (const sheet of state.sheets) {
     for (const row of sheet.rows) {
-      const name = String(row['商品名'] || '').toLowerCase();
-      const maker = String(row['メーカー'] || '').toLowerCase();
-      if (name.includes(q) || maker.includes(q)) {
+      const haystack = normalizeForSearch(
+        [row['商品名'], row['メーカー'], row['規格']].filter(Boolean).join(' ')
+      );
+      if (terms.every(t => haystack.includes(t))) {
         hits.push({ sheet: sheet.name, row });
-        if (hits.length >= 30) break outer;
+        if (hits.length >= limit) break outer;
       }
     }
   }
+  return hits;
+}
+
+function runKeywordSearch(query) {
+  const resultsEl = $('keywordResults');
+  const q = query.trim();
+  if (q.length < 2) {
+    resultsEl.innerHTML = '';
+    return;
+  }
+  const hits = searchMasterRows(q, 30);
   if (!hits.length) {
     resultsEl.innerHTML = `<p class="muted">該当する商品が見つかりません</p>`;
     return;
@@ -743,23 +757,12 @@ $('correctionSearch').addEventListener('input', () => {
 
 function runCorrectionSearch(query) {
   const resultsEl = $('correctionSearchResults');
-  const q = query.trim().toLowerCase();
+  const q = query.trim();
   if (q.length < 2) {
     resultsEl.innerHTML = '';
     return;
   }
-  const hits = [];
-  outer:
-  for (const sheet of state.sheets) {
-    for (const row of sheet.rows) {
-      const name = String(row['商品名'] || '').toLowerCase();
-      const maker = String(row['メーカー'] || '').toLowerCase();
-      if (name.includes(q) || maker.includes(q)) {
-        hits.push({ sheet: sheet.name, row });
-        if (hits.length >= 30) break outer;
-      }
-    }
-  }
+  const hits = searchMasterRows(q, 30);
   resultsEl.innerHTML = '';
   if (!hits.length) {
     resultsEl.innerHTML = `<p class="muted">該当する商品が見つかりません</p>`;
